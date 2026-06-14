@@ -30,12 +30,12 @@ except PackageNotFoundError:
 
 def parcel(
     *,
-    sigma: float,
+    sigma: float = 0.072,
     kappa: Iterable[float],
     meanr: Iterable[float],
     n_tot: Iterable[float],
     gstdv: Iterable[float],
-    MAC: float,
+    MAC: float = 1,
     n_bins: float,
     RH: float,
     w: float,
@@ -53,8 +53,11 @@ def parcel(
     stop_at_s_max=False,
 ):
     """runs a simulation for the given parameters and returns a tuple of:
-    - concentration of droplets with r_wet>r_crit (in metre^{-3} @ STP);
-    - maximal supersaturation during the ascent."""
+    - concentration of droplets with r_wet>r_crit at final timestep (in metre^{-3} @ STP);
+    - relatuve humidity (saturation) profile during the ascent (1D array);
+    - wet radii 2D array;
+    - time coordinate (1D array).
+    """
     assert len(kappa) == len(meanr) == len(n_tot) == len(gstdv)
     assert all(np.asarray(kappa) == kappa[0])  # TODO
     assert MAC == 1  # TODO
@@ -89,7 +92,8 @@ def parcel(
     )
     r_c = eqp.r_c(c, s, r_d=s.r_d[:, None], T=T[None, :])
     n_a = (r_w[:, -1] > r_c[:, -1]) @ s.ξ / s.m_d * c.ρ_stp
-    return n_a, max(RH)
+    time = sol.t * si.s
+    return n_a, RH, r_w, time
 
 
 def cfg_ccn(
@@ -506,7 +510,7 @@ if "pytest" in str(__loader__):
     def test_parcel(stop_at_s_max):
         """runs the parcel() interface with arbitrary parameters asserting on the
         returned values"""
-        n1_act, s_max = parcel(
+        n1_act, rh, _, _ = parcel(
             w=1,
             kappa=(0.8, 0.8),
             meanr=(3e-8, 3e-8),
@@ -529,7 +533,7 @@ if "pytest" in str(__loader__):
             D_v=2.26e-05,
             stop_at_s_max=stop_at_s_max,
         )
-        np.testing.assert_approx_equal(s_max, 1.002026)
+        np.testing.assert_approx_equal(max(rh), 1.002026)
         np.testing.assert_approx_equal(n1_act, 220e6)
 
     class TestExampleBasics:
