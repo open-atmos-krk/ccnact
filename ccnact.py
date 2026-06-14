@@ -542,16 +542,27 @@ if "pytest" in str(__loader__):
         # pylint:disable=missing-function-docstring
 
         @staticmethod
-        @pytest.fixture(scope="session", name="nb_vars")
-        def variables_fixture():
+        @pytest.fixture(scope="session", name="nb_vars_basics")
+        def variables_fixture_basics():
             return notebook_vars(
                 file=Path(__file__).parent / "examples" / "basics.ipynb", plot=False
             )
 
         @staticmethod
+        @pytest.fixture(scope="session", name="nb_vars_raw_state")
+        def variables_fixture_raw_state():
+            return notebook_vars(
+                file=Path(__file__).parent / "examples" / "raw_state.ipynb", plot=False
+            )
+
+        @staticmethod
+        def test_raw_state_nb(nb_vars_raw_state):
+            pass  # TODO
+
+        @staticmethod
         @pytest.mark.parametrize("var", ("s_max", "n_act"))
-        def test_monotonic_vars(nb_vars, var):
-            assert all(np.diff(nb_vars[var])) > 0
+        def test_monotonic_vars(nb_vars_basics, var):
+            assert all(np.diff(nb_vars_basics[var])) > 0
 
         @staticmethod
         @pytest.mark.parametrize(
@@ -563,21 +574,27 @@ if "pytest" in str(__loader__):
                 ("n_act", -1, 78.5e7),
             ),
         )
-        def test_check_values(nb_vars, var, index, value):
-            np.testing.assert_approx_equal(nb_vars[var][index], value, significant=5)
+        def test_check_values(nb_vars_basics, var, index, value):
+            np.testing.assert_approx_equal(
+                nb_vars_basics[var][index], value, significant=5
+            )
 
         @staticmethod
-        def test_no_regression_in_walltime(nb_vars):
-            assert nb_vars["wall_time"] < 15 * SI.s
+        @pytest.mark.xfail(
+            platform.system() == "Darwin" and platform.machine() == "x86_64",
+            reason="GitHub workers performance seem to vary",
+        )
+        def test_no_regression_in_walltime(nb_vars_basics):
+            assert nb_vars_basics["wall_time"] < 15 * SI.s
 
         @staticmethod
-        def test_concurrent(nb_vars):
+        def test_concurrent(nb_vars_basics):
             assert (
-                nb_vars["cpu_time"]
+                nb_vars_basics["cpu_time"]
                 >= {
                     "Linux": 2.5,
                     "Darwin": 0.75,
                     "Windows": 1,
                 }[platform.system()]
-                * nb_vars["wall_time"]
+                * nb_vars_basics["wall_time"]
             )
