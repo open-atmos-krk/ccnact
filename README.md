@@ -29,11 +29,11 @@ The last five points were the key motivating factors for the development -
 
 ## 💡 example notebooks
 
-- exploring dependence of activatied fraction and maximal supersaturation on updraft velocity: 
+- exploring dependence of activatied fraction and maximal supersaturation on updraft velocity:    
   [![View notebook](https://img.shields.io/static/v1?label=render%20on&logo=github&color=87ce3e&message=GitHub)](https://github.com/open-atmos-krk/ccnact/blob/main/examples/basics.ipynb) 
   [![Open In Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/github/open-atmos-krk/ccnact/blob/main/examples/basics.ipynb) 
   [![Binder](https://mybinder.org/badge_logo.svg)](https://mybinder.org/v2/gh/open-atmos-krk/ccnact.git/main?urlpath=lab/tree/examples/basics.ipynb)
-- plotting the raw state of the model (saturation and wet radii profiles): 
+- plotting the raw state of the model (saturation and wet radii profiles):    
   [![View notebook](https://img.shields.io/static/v1?label=render%20on&logo=github&color=87ce3e&message=GitHub)](https://github.com/open-atmos-krk/ccnact/blob/main/examples/raw_state.ipynb) 
   [![Open In Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/github/open-atmos-krk/ccnact/blob/main/examples/raw_state.ipynb) 
   [![Binder](https://mybinder.org/badge_logo.svg)](https://mybinder.org/v2/gh/open-atmos-krk/ccnact.git/main?urlpath=lab/tree/examples/raw_state.ipynb)
