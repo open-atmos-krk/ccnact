@@ -15,7 +15,9 @@ moving-sectional/particle-resolved aerosol-cloud microphysics, featuring:
 - 🔌 portable across platforms and architectures (CI on Linux, macOS & Windows, on Intel & ARM CPUs)
 - ⚙️ single-function interface allowing to modify every single constant, and returning a tuple of:
   - concentration of activated droplets (at STP)
-  - maximal supersaturation
+  - relative humidity (saturation) along the ascent (1D array)
+  - wet radii for all sections/particles (2D array)
+  - time values (1D array)
 - 🧩 effective interfacing options for [Matlab](https://www.mathworks.com/help/matlab/call-python-libraries.html), [IDL](https://www.nv5geospatialsoftware.com/docs/Python.html), [Julia](https://github.com/JuliaPy/PythonCall.jl), etc 
 - ⚖️ unit-aware implemetation using [Pint](https://pint.readthedocs.io/) (dimensional analysis enabled for tests only)
 - 🚀 subsecond execution times for common parameter settings
@@ -27,10 +29,14 @@ The last five points were the key motivating factors for the development -
 
 ## 💡 example notebooks
 
-- basics: 
+- exploring dependence of activatied fraction and maximal supersaturation on updraft velocity: 
   [![View notebook](https://img.shields.io/static/v1?label=render%20on&logo=github&color=87ce3e&message=GitHub)](https://github.com/open-atmos-krk/ccnact/blob/main/examples/basics.ipynb) 
   [![Open In Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/github/open-atmos-krk/ccnact/blob/main/examples/basics.ipynb) 
   [![Binder](https://mybinder.org/badge_logo.svg)](https://mybinder.org/v2/gh/open-atmos-krk/ccnact.git/main?urlpath=lab/tree/examples/basics.ipynb)
+- plotting the raw state of the model (saturation and wet radii profiles): 
+  [![View notebook](https://img.shields.io/static/v1?label=render%20on&logo=github&color=87ce3e&message=GitHub)](https://github.com/open-atmos-krk/ccnact/blob/main/examples/raw_state.ipynb) 
+  [![Open In Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/github/open-atmos-krk/ccnact/blob/main/examples/raw_state.ipynb) 
+  [![Binder](https://mybinder.org/badge_logo.svg)](https://mybinder.org/v2/gh/open-atmos-krk/ccnact.git/main?urlpath=lab/tree/examples/raw_state.ipynb)
 
 ## 💻 notes for users
 
@@ -40,7 +46,7 @@ Using from Python:
 ```python
 from ccnact import parcel
 help(parcel)
-n_act, s_max = parcel(...)
+n_act, rh, r_w, time = parcel(...)
 ```
 
 Interfacing from Matlab (using the [built-in Python bridge](https://www.mathworks.com/help/matlab/call-python-libraries.html)):
