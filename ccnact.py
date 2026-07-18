@@ -50,13 +50,16 @@ def parcel(
     c_pd: float = None,
     rho_l: float = None,
     D_v: float = None,
-    stop_at_s_max=False,
+    stop_at_s_max: bool = False,
+    method: str = "LSODA",
+    rtol: float = 1e-4,
 ):
     """runs a simulation for the given parameters and returns a tuple of:
     - concentration of droplets with r_wet>r_crit at final timestep (in metre^{-3} @ STP);
-    - relatuve humidity (saturation) profile during the ascent (1D array);
-    - wet radii 2D array;
-    - time coordinate (1D array).
+    - relative humidity (saturation) profile during the ascent (1D float array);
+    - wet radii (2D float array);
+    - time coordinate (1D float array);
+    - activation status defined by r_w>r_c condition (2D Boolea array).
     """
     assert len(kappa) == len(meanr) == len(n_tot) == len(gstdv)
     assert all(np.asarray(kappa) == kappa[0])  # TODO
@@ -80,7 +83,9 @@ def parcel(
         p=p,
     )
     y0 = initial_condition(eqp, c, s, ix)
-    sol = solve(c, s, ix, y0, stop_at_s_max)
+    sol = solve(
+        c=c, s=s, ix=ix, y0=y0, stop_at_s_max=stop_at_s_max, method=method, rtol=rtol
+    )
 
     p_d = sol.y[ix.p_d] * si.Pa
     T = sol.y[ix.T] * si.K
@@ -90,10 +95,10 @@ def parcel(
         ρ_vs=eqp.ρ_v(c, p_v=eqp.p_vs(c, T=T), T=T),
         ρ_d=eqp.ρ_d(c, p_d=p_d, T=T),
     )
-    r_c = eqp.r_c(c, s, r_d=s.r_d[:, None], T=T[None, :])
-    n_a = (r_w[:, -1] > r_c[:, -1]) @ s.ξ / s.m_d * c.ρ_stp
+    act = r_w > eqp.r_c(c, s, r_d=s.r_d[:, None], T=T[None, :])
+    n_a = act[:, -1] @ s.ξ / s.m_d * c.ρ_stp
     time = sol.t * si.s
-    return n_a, RH, r_w, time
+    return n_a, RH, r_w, time, act
 
 
 def cfg_ccn(
@@ -115,7 +120,7 @@ def cfg_ccn(
 ):
     """returns a tuple of (internally used): config dict, indices namedtuple
     and setup namedtuple; the default function arguments match the setup
-    used in the BAMS draft"""
+    used in the GMD draft"""
     v_m3_stp = 1
     cfg = {
         "dist": tuple(
@@ -332,7 +337,7 @@ def initial_condition(e, c, s, ix):
     return y0
 
 
-def solve(c, s, ix, y0, stop_at_s_max=False):
+def solve(*, c, s, ix, y0, stop_at_s_max, method, rtol):
     """performs time integration using SciPy's interface to LSODA"""
     with np.errstate(divide="ignore", over="ignore", invalid="ignore"):
         sol = scipy.integrate.solve_ivp(
@@ -340,8 +345,8 @@ def solve(c, s, ix, y0, stop_at_s_max=False):
             (0, s.t_max),
             y0,
             args=(np.empty(ix.size), eqp, c, s, ix),
-            method="LSODA",
-            rtol=1e-4,
+            method=method,
+            rtol=rtol,
             events=stop_cond if stop_at_s_max else None,
         )
     assert sol.success, sol.message
@@ -477,11 +482,13 @@ if "pytest" in str(__loader__):
         assert "Cannot convert from 'kelvin' ([temperature]) to" in str(excinfo.value)
 
     def test_case_from_the_paper():
-        """repropoduces simulation from the BAMS paper draft asserting on the final values"""
+        """repropoduces simulation from the GMD paper draft asserting on the final values"""
         c, si = constants()
         _, ix, s = cfg_ccn(c, si)
         y0 = initial_condition(eqp, c, s, ix)
-        sol = solve(c, s, ix, y0)
+        sol = solve(
+            c=c, s=s, ix=ix, y0=y0, stop_at_s_max=False, method="LSODA", rtol=1e-4
+        )
 
         with DimensionalAnalysis():
             c, si = constants()
@@ -510,7 +517,7 @@ if "pytest" in str(__loader__):
     def test_parcel(stop_at_s_max):
         """runs the parcel() interface with arbitrary parameters asserting on the
         returned values"""
-        n1_act, rh, _, _ = parcel(
+        n1_act, rh, _, _, _ = parcel(
             w=1,
             kappa=(0.8, 0.8),
             meanr=(3e-8, 3e-8),
