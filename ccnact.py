@@ -53,6 +53,7 @@ def parcel(
     stop_at_s_max: bool = False,
     method: str = "LSODA",
     rtol: float = 1e-4,
+    allow_ripening: bool = True,
 ):
     """runs a simulation for the given parameters and returns a tuple of:
     - concentration of droplets with r_wet>r_crit at final timestep (in metre^{-3} @ STP);
@@ -84,7 +85,14 @@ def parcel(
     )
     y0 = initial_condition(eqp, c, s, ix)
     sol = solve(
-        c=c, s=s, ix=ix, y0=y0, stop_at_s_max=stop_at_s_max, method=method, rtol=rtol
+        c=c,
+        s=s,
+        ix=ix,
+        y0=y0,
+        stop_at_s_max=stop_at_s_max,
+        method=method,
+        rtol=rtol,
+        allow_ripening=allow_ripening,
     )
 
     p_d = sol.y[ix.p_d] * si.Pa
@@ -238,7 +246,7 @@ def constants(*, R_d=None, R_v=None, l_v=None, g=None, c_pd=None, rho_l=None, D_
     return c, si
 
 
-def __ode_helper(y, e, c, s, ix):
+def __ode_helper(y, e, c, s, ix, allow_ripening):
     """common calculations for ODE solution"""
     ρ_d = e.ρ_d(c, p_d=y[ix.p_d], T=y[ix.T])
     ρ_vs = e.ρ_v(c, p_v=e.p_vs(c, T=y[ix.T]), T=y[ix.T])
@@ -246,9 +254,11 @@ def __ode_helper(y, e, c, s, ix):
     dr_w__dt = e.dr_w__dt(
         c,
         r_w=r_w,
-        ρ_v=ρ_vs * e.RH(ρ_vs=ρ_vs, ρ_d=ρ_d, q_v=s.q_t - e.q_l(c, s, r_w=r_w)),
+        ρ_v=ρ_vs * (rh := e.RH(ρ_vs=ρ_vs, ρ_d=ρ_d, q_v=s.q_t - e.q_l(c, s, r_w=r_w))),
         ρ_o=ρ_vs * e.RH_eq(c, s, r_w=r_w, r_d=s.r_d, T=y[ix.T]),
     )
+    if rh > 1 and not allow_ripening:
+        dr_w__dt = np.maximum(dr_w__dt, 0)
     dq_v__dt = e.dq_v__dt(c, s, r_w=r_w, dr_w__dt=dr_w__dt)
     return ρ_d, ρ_vs, r_w, dr_w__dt, dq_v__dt
 
@@ -290,10 +300,10 @@ eqp = namedtuple(
 )(**eqp)
 
 
-def ode_rhs(_, y, dy__dt, e, c, s, ix):
+def ode_rhs(_, y, dy__dt, e, c, s, ix, allow_ripening=True):
     """ODE system right-hand-side following eq. (13) in Arabas & Shima 2017
     (https://doi.org/10.5194/npg-24-535-2017)"""
-    ρ_d, _, r_w, dr_w__dt, dq_v__dt = e.ode_helper(y, e, c, s, ix)
+    ρ_d, _, r_w, dr_w__dt, dq_v__dt = e.ode_helper(y, e, c, s, ix, allow_ripening)
     dy__dt[ix.p_d] = e.dp_d__dt(c, s, ρ_d=ρ_d)
     dy__dt[ix.x] = dr_w__dt / e.dr_w__dx(r_w=r_w)
     dy__dt[ix.T] = e.dT__dt(c, dp_d__dt=dy__dt[ix.p_d], dq_v__dt=dq_v__dt, ρ_d=ρ_d)
@@ -337,14 +347,14 @@ def initial_condition(e, c, s, ix):
     return y0
 
 
-def solve(*, c, s, ix, y0, stop_at_s_max, method, rtol):
+def solve(*, c, s, ix, y0, stop_at_s_max, method, rtol, allow_ripening):
     """performs time integration using SciPy's interface to LSODA"""
     with np.errstate(divide="ignore", over="ignore", invalid="ignore"):
         sol = scipy.integrate.solve_ivp(
             ode_rhs,
             (0, s.t_max),
             y0,
-            args=(np.empty(ix.size), eqp, c, s, ix),
+            args=(np.empty(ix.size), eqp, c, s, ix, allow_ripening),
             method=method,
             rtol=rtol,
             events=stop_cond if stop_at_s_max else None,
@@ -487,7 +497,14 @@ if "pytest" in str(__loader__):
         _, ix, s = cfg_ccn(c, si)
         y0 = initial_condition(eqp, c, s, ix)
         sol = solve(
-            c=c, s=s, ix=ix, y0=y0, stop_at_s_max=False, method="LSODA", rtol=1e-4
+            c=c,
+            s=s,
+            ix=ix,
+            y0=y0,
+            stop_at_s_max=False,
+            method="LSODA",
+            rtol=1e-4,
+            allow_ripening=True,
         )
 
         with DimensionalAnalysis():
