@@ -4,8 +4,9 @@
 
 ## 📌 overview
 
-`ccnact` is a simple, yet complete, adiabatic/hydrostatic air-parcel framework employing
-moving-sectional/particle-resolved aerosol-cloud microphysics, featuring:
+`ccnact` is a simple, yet complete, adiabatic/hydrostatic air-parcel model implementation
+based on [Arabas et al. 2026](https://doi.org/10.5194/egusphere-2026-3906).
+It features moving-sectional/particle-resolved aerosol-cloud microphysics representation with:
 
 - 🧮 integration using [SciPy's interface to LSODA](https://docs.scipy.org/doc/scipy/reference/generated/scipy.integrate.LSODA.html) stiff ODE solver
 - 📝 ODE system based on [Arabas & Shima 2017](https://doi.org/10.5194/npg-24-535-2017) (extended to polydisperse aerosol size spectrum)
