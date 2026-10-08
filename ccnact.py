@@ -62,8 +62,16 @@ def parcel(
     - time coordinate (1D float array);
     - activation status defined by r_w>r_c condition (2D Boolea array).
     """
-    assert len(kappa) == len(meanr) == len(n_tot) == len(gstdv)
-    assert all(np.asarray(kappa) == kappa[0])  # TODO
+    c, si = constants(R_d=R_d, R_v=R_v, l_v=l_v, g=g, c_pd=c_pd, rho_l=rho_l, D_v=D_v)
+
+    assert n_stp is None or n_vol is None
+    if n_vol is not None:
+        p_v = RH * eqp.p_vs(c, T)
+        ρ_d = eqp.ρ_d(c, p - p_v, T)
+        ρ_v = eqp.ρ_v(c, p_v, T)
+        n_stp = tuple(n * c.ρ_stp / (ρ_d + ρ_v) for n in n_vol)
+
+    assert len(kappa) == len(meanr) == len(n_stp) == len(gstdv)
     assert MAC == 1  # TODO
 
     c, si = constants(R_d=R_d, R_v=R_v, l_v=l_v, g=g, c_pd=c_pd, rho_l=rho_l, D_v=D_v)
