@@ -200,6 +200,12 @@ def quantile_sample(*, dist, n_sd, norm):
                 for m in range(n_modes)
             )
         ),
+        np.concatenate(
+            tuple(
+                np.full(n_per_mode, kappa[m])
+                for m in range(n_modes)
+            )
+        )
     )
 
 
