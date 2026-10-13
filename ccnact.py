@@ -14,7 +14,7 @@ used within tests, by default all computations are done on pure floats).
 import math
 from collections import namedtuple
 from importlib.metadata import PackageNotFoundError, version
-from typing import Iterable
+from typing import Iterable, Optional
 
 import numpy as np
 import pint
@@ -33,7 +33,8 @@ def parcel(
     sigma: float = 0.072,
     kappa: Iterable[float],
     meanr: Iterable[float],
-    n_tot: Iterable[float],
+    n_stp: Optional[Iterable[float]] = None,
+    n_vol: Optional[Iterable[float]] = None,
     gstdv: Iterable[float],
     MAC: float = 1,
     n_bins: float,
@@ -54,18 +55,30 @@ def parcel(
     method: str = "LSODA",
     rtol: float = 1e-4,
 ):
-    """runs a simulation for the given parameters and returns a tuple of:
+    """
+    runs a simulation for the given parameters and returns a tuple of:
     - concentration of droplets with r_wet>r_crit at final timestep (in metre^{-3} @ STP);
     - relative humidity (saturation) profile during the ascent (1D float array);
     - wet radii (2D float array);
     - time coordinate (1D float array);
-    - activation status defined by r_w>r_c condition (2D Boolea array).
+    - activation status defined by r_w>r_c condition (2D Boolean array);
+    - temperature (1D float array).
+
+    parameters:
+    - n_stp: volume concentrations (per mode) at standard temperature and pressure (and RH=0)
     """
-    assert len(kappa) == len(meanr) == len(n_tot) == len(gstdv)
-    assert all(np.asarray(kappa) == kappa[0])  # TODO
+    c, si = constants(R_d=R_d, R_v=R_v, l_v=l_v, g=g, c_pd=c_pd, rho_l=rho_l, D_v=D_v)
+
+    assert n_stp is None or n_vol is None
+    if n_vol is not None:
+        p_v = RH * eqp.p_vs(c, T)
+        ρ_d = eqp.ρ_d(c, p - p_v, T)
+        ρ_v = eqp.ρ_v(c, p_v, T)
+        n_stp = tuple(n * c.ρ_stp / (ρ_d + ρ_v) for n in n_vol)
+
+    assert len(kappa) == len(meanr) == len(n_stp) == len(gstdv)
     assert MAC == 1  # TODO
 
-    c, si = constants(R_d=R_d, R_v=R_v, l_v=l_v, g=g, c_pd=c_pd, rho_l=rho_l, D_v=D_v)
     _, ix, s = cfg_ccn(
         c,
         si,
@@ -76,7 +89,7 @@ def parcel(
         n_sd=n_bins,
         kappa=kappa,
         meanr=meanr,
-        n_tot=n_tot,
+        n_stp=n_stp,
         gstdv=gstdv,
         nt=nt,
         dt=dt or 1 * si.s,
@@ -95,10 +108,10 @@ def parcel(
         ρ_vs=eqp.ρ_v(c, p_v=eqp.p_vs(c, T=T), T=T),
         ρ_d=eqp.ρ_d(c, p_d=p_d, T=T),
     )
-    act = r_w > eqp.r_c(c, s, r_d=s.r_d[:, None], T=T[None, :])
+    act = r_w > eqp.r_c(c, s, r_d=s.r_d[:, None], T=T[None, :], κ=s.κ[:, None])
     n_a = act[:, -1] @ s.ξ / s.m_d * c.ρ_stp
     time = sol.t * si.s
-    return n_a, RH, r_w, time, act
+    return n_a, RH, r_w, time, act, T
 
 
 def cfg_ccn(
@@ -113,7 +126,7 @@ def cfg_ccn(
     n_sd=44,
     meanr=(3.2e-8,),
     gstdv=(1.75,),
-    n_tot=(8e9,),
+    n_stp=(8e9,),
     kappa=(0.7,),
     nt=150,
     dt=1,
@@ -128,17 +141,14 @@ def cfg_ccn(
                 s := math.log(gstdv[m]),
                 scale=(meanr[m]) / math.exp((s**2) / 2),
             )
-            for m in range(len(n_tot))
+            for m in range(len(n_stp))
         ),
-        "norm": tuple(n_tot[m] * v_m3_stp for m in range(len(n_tot))),
+        "norm": tuple(n_stp[m] * v_m3_stp for m in range(len(n_stp))),
         "Δv_m3_stp": v_m3_stp,
         "n_sd": n_sd,
-        "κ": kappa[0],
     }
-    cfg["r_d"], cfg["ξ"] = quantile_sample(
-        dist=cfg["dist"],
-        n_sd=cfg["n_sd"],
-        norm=cfg["norm"],
+    cfg["r_d"], cfg["ξ"], cfg["κ"] = quantile_sample(
+        dist=cfg["dist"], n_sd=cfg["n_sd"], norm=cfg["norm"], kappa=kappa
     )
     e = RH * eqp.p_vs(c, T * si.K)
     q_t = c.eps * e / (p * si.Pa - e)
@@ -175,7 +185,7 @@ def cfg_ccn(
     )
 
 
-def quantile_sample(*, dist, n_sd, norm):
+def quantile_sample(*, dist, n_sd, norm, kappa):
     """samples muti-mode lognormal size distribution on `n_sd` size sections
     with a uniform-in-multiplicity-per-mode layout, in which each mode is
     represented with `n_sd // len(dist)` super-particles"""
@@ -191,6 +201,7 @@ def quantile_sample(*, dist, n_sd, norm):
                 for m in range(n_modes)
             )
         ),
+        np.concatenate(tuple(np.full(n_per_mode, kappa[m]) for m in range(n_modes))),
     )
 
 
@@ -247,7 +258,7 @@ def __ode_helper(y, e, c, s, ix):
         c,
         r_w=r_w,
         ρ_v=ρ_vs * e.RH(ρ_vs=ρ_vs, ρ_d=ρ_d, q_v=s.q_t - e.q_l(c, s, r_w=r_w)),
-        ρ_o=ρ_vs * e.RH_eq(c, s, r_w=r_w, r_d=s.r_d, T=y[ix.T]),
+        ρ_o=ρ_vs * e.RH_eq(c, s, r_w=r_w, r_d=s.r_d, T=y[ix.T], κ=s.κ),
     )
     dq_v__dt = e.dq_v__dt(c, s, r_w=r_w, dr_w__dt=dr_w__dt)
     return ρ_d, ρ_vs, r_w, dr_w__dt, dq_v__dt
@@ -257,8 +268,8 @@ eqp = namedtuple(
     "Eqs",
     (
         eqp := {
-            "RH_eq": lambda c, s, r_w, r_d, T: (r_w**3 - r_d**3)
-            / (r_w**3 - r_d**3 * (1 - s.κ))
+            "RH_eq": lambda c, s, r_w, r_d, T, κ: (r_w**3 - r_d**3)
+            / (r_w**3 - r_d**3 * (1 - κ))
             * np.exp(2 * s.σ_w / (c.R_v * T * c.ρ_w * r_w)),
             "dp_d__dt": lambda c, p, ρ_d: -p.w * ρ_d * c.g,
             "dT__dt": lambda c, dp_d__dt, dq_v__dt, ρ_d: (
@@ -280,8 +291,8 @@ eqp = namedtuple(
             * (s.ξ * r_w**2 @ dr_w__dt)
             / s.m_d
             * c.ρ_w,
-            "r_c": lambda c, s, r_d, T: (
-                3 * s.κ * r_d**3 / (2 * s.σ_w / (c.R_v * T * c.ρ_w))
+            "r_c": lambda c, s, r_d, T, κ: (
+                3 * κ * r_d**3 / (2 * s.σ_w / (c.R_v * T * c.ρ_w))
             )
             ** 0.5,
             "ode_helper": __ode_helper,
@@ -324,9 +335,9 @@ def initial_condition(e, c, s, ix):
     )
     cmn |= {"s": s}
     root = scipy_optimize_elementwise.find_root(
-        lambda x, r_d: rh - e.RH_eq(r_w=x, r_d=r_d, **cmn),
-        (s.r_d, e.r_c(r_d=s.r_d, **cmn)),
-        args=(s.r_d,),
+        lambda x, r_d, κ: rh - e.RH_eq(r_w=x, r_d=r_d, κ=κ, **cmn),
+        (s.r_d, e.r_c(r_d=s.r_d, κ=s.κ, **cmn)),
+        args=(s.r_d, s.κ),
     )
     assert all(root.success)
 
@@ -502,7 +513,7 @@ if "pytest" in str(__loader__):
                 ρ_vs=eqp.ρ_v(c, p_v=eqp.p_vs(c, T=temp), T=temp),
                 ρ_d=eqp.ρ_d(c, p_d=p_d, T=temp),
             )
-            r_c = eqp.r_c(c, s, r_d=s.r_d[:, None], T=temp[None, :])
+            r_c = eqp.r_c(c, s, r_d=s.r_d[:, None], T=temp[None, :], κ=s.κ[:, None])
 
             n_a = (r_w[:, -1] > r_c[:, -1]) @ s.ξ / s.m_d * c.ρ_stp
             err = np.amax(s.ξ) / s.m_d * c.ρ_stp
@@ -517,11 +528,11 @@ if "pytest" in str(__loader__):
     def test_parcel(stop_at_s_max):
         """runs the parcel() interface with arbitrary parameters asserting on the
         returned values"""
-        n1_act, rh, _, _, _ = parcel(
+        n1_act, rh, _, _, _, _ = parcel(
             w=1,
             kappa=(0.8, 0.8),
             meanr=(3e-8, 3e-8),
-            n_tot=(0.5e9, 0.5e9),
+            n_stp=(0.5e9, 0.5e9),
             gstdv=(1.5, 1.5),
             n_bins=100,
             RH=0.99,
