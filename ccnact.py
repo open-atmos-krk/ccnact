@@ -61,7 +61,8 @@ def parcel(
     - relative humidity (saturation) profile during the ascent (1D float array);
     - wet radii (2D float array);
     - time coordinate (1D float array);
-    - activation status defined by r_w>r_c condition (2D Boolea array).
+    - activation status defined by r_w>r_c condition (2D Boolean array);
+    - temperature (1D float array).
 
     parameters:
     - n_stp: volume concentrations (per mode) at standard temperature and pressure (and RH=0)
@@ -147,10 +148,7 @@ def cfg_ccn(
         "n_sd": n_sd,
     }
     cfg["r_d"], cfg["ξ"], cfg["κ"] = quantile_sample(
-        dist=cfg["dist"],
-        n_sd=cfg["n_sd"],
-        norm=cfg["norm"],
-        kappa=kappa
+        dist=cfg["dist"], n_sd=cfg["n_sd"], norm=cfg["norm"], kappa=kappa
     )
     e = RH * eqp.p_vs(c, T * si.K)
     q_t = c.eps * e / (p * si.Pa - e)
@@ -203,12 +201,7 @@ def quantile_sample(*, dist, n_sd, norm, kappa):
                 for m in range(n_modes)
             )
         ),
-        np.concatenate(
-            tuple(
-                np.full(n_per_mode, kappa[m])
-                for m in range(n_modes)
-            )
-        )
+        np.concatenate(tuple(np.full(n_per_mode, kappa[m]) for m in range(n_modes))),
     )
 
 

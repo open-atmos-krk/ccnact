@@ -118,7 +118,7 @@ def test_case_from_the_paper():
 def test_parcel(stop_at_s_max):
     """runs the parcel() interface with arbitrary parameters asserting on the
     returned values"""
-    n1_act, rh, _, _, _ = parcel(
+    n1_act, rh, _, _, _, _ = parcel(
         w=1,
         kappa=(0.8, 0.8),
         meanr=(3e-8, 3e-8),
