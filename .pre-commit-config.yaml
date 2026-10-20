@@ -10,7 +10,7 @@ repos:
         args: [--fast]
 
   - repo: https://github.com/timothycrosley/isort
-    rev: 9.0.0b1
+    rev: 9.0.2
     hooks:
       - id: isort
         args: [--profile=black]
