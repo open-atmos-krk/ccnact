@@ -24,8 +24,9 @@ jobs:
           fetch-depth: 0
       - uses: actions/setup-python@v7.0.0
         with:
-          python-version: 3.13
+          python-version: 3.14
       - run: |
+          pip install -e .[dev]
           pip install pre-commit
           pre-commit run --all-files --show-diff-on-failure
 
@@ -50,7 +51,7 @@ jobs:
       - run: pip install -e .
       - run: python -c "from ccnact import parcel"
       - run: pip install -e .[dev]
-      - run: pytest ccnact.py
+      - run: pytest
 
   package:
     runs-on: ubuntu-latest

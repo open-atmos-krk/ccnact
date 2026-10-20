@@ -1,4 +1,4 @@
-files: '.py'
+files: '\.(py|ipynb)'
 exclude: '.git'
 default_stages: [pre-commit]
 
@@ -7,11 +7,14 @@ repos:
     rev: 26.3.1
     hooks:
       - id: black
+        args: [--fast]
 
   - repo: https://github.com/timothycrosley/isort
     rev: 9.0.0b1
     hooks:
       - id: isort
+        args: [--profile=black]
+
 
   - repo: https://github.com/pre-commit/pre-commit-hooks
     rev: v6.0.0
@@ -24,6 +27,7 @@ repos:
     rev: v4.0.7
     hooks:
       - id: pylint
+        language: system
         args:
           [
             "-rn", # Only display messages
