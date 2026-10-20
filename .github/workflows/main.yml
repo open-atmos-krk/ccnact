@@ -27,8 +27,6 @@ jobs:
           python-version: 3.13
       - run: |
           pip install pre-commit
-          pre-commit clean
-          pre-commit autoupdate
           pre-commit run --all-files --show-diff-on-failure
 
   pytest:
