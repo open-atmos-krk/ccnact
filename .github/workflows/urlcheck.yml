@@ -22,5 +22,6 @@ jobs:
           print_all: false
           verbose: true
           timeout: 20
-          exclude_urls: http://www.w3.org/1999/xlink\,https://creativecommons.org/licenses/by/4.0/\
+          exclude_patterns: http://www.w3.org,https://creativecommons.org/licenses/by/4.0
+          exclude_files: .github/workflows/urlcheck.yml
           retry_count: 3
