@@ -40,7 +40,7 @@ repos:
      - id: nbqa-black
        additional_dependencies: [black==26.10.1]
      - id: nbqa-pyupgrade
-       additional_dependencies: [pyupgrade==3.21.2]
+       additional_dependencies: [pyupgrade==3.22.0]
      - id: nbqa-isort
        additional_dependencies: [isort==9.0.2]
      - id: nbqa-pylint
