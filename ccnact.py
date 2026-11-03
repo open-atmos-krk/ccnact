@@ -20,6 +20,7 @@ import numpy as np
 import pint
 import scipy
 from scipy.optimize import elementwise as scipy_optimize_elementwise
+from functools import partial,Placeholder
 
 try:
     __version__ = version(__name__)
@@ -354,7 +355,12 @@ def jacobian(_, y, __, e, c, s, ix, jac):
     where n is the number of size sections, and +2
     stems from two gas state variables (e.g., T, p).
     """
-
+    res = scipy.differentiate.jacobian(
+        lambda x: np.apply_along_axis(partial(ode_rhs, _, Placeholder, __, e, c, s, ix, jac), axis=0, arr=x),
+        y
+    )
+    jac[:,:] = res.df
+    
     return jac
 
 

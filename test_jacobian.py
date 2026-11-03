@@ -1,15 +1,18 @@
 from ccnact import parcel
+import pytest
 
-
-def test_jacobian(example_parameters):
+@pytest.mark.parametrize(
+    "use_analytic_jacobian",
+    [False, True],
+)
+def test_jacobian(example_parameters, use_analytic_jacobian):
     # arrange
     output = {}
 
     # act
-    for analytic_jacobian in [False]:
-        output[analytic_jacobian] = parcel(
-            **example_parameters, analytic_jacobian=analytic_jacobian
-        )
+    output[use_analytic_jacobian] = parcel(
+        **example_parameters, analytic_jacobian=use_analytic_jacobian
+    )
 
     # assert
     # TODO: check with Jacobian makes it faster
