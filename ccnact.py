@@ -20,6 +20,7 @@ import numpy as np
 import pint
 import scipy
 from scipy.optimize import elementwise as scipy_optimize_elementwise
+from functools import partial,Placeholder
 
 try:
     __version__ = version(__name__)
@@ -53,6 +54,7 @@ def parcel(
     stop_at_s_max: bool = False,
     method: str = "LSODA",
     rtol: float = 1e-4,
+    analytic_jacobian=False,
 ):
     """runs a simulation for the given parameters and returns a tuple of:
     - concentration of droplets with r_wet>r_crit at final timestep (in metre^{-3} @ STP);
@@ -84,7 +86,14 @@ def parcel(
     )
     y0 = initial_condition(eqp, c, s, ix)
     sol = solve(
-        c=c, s=s, ix=ix, y0=y0, stop_at_s_max=stop_at_s_max, method=method, rtol=rtol
+        c=c,
+        s=s,
+        ix=ix,
+        y0=y0,
+        stop_at_s_max=stop_at_s_max,
+        method=method,
+        rtol=rtol,
+        analytic_jacobian=analytic_jacobian,
     )
 
     p_d = sol.y[ix.p_d] * si.Pa
@@ -290,7 +299,7 @@ eqp = namedtuple(
 )(**eqp)
 
 
-def ode_rhs(_, y, dy__dt, e, c, s, ix):
+def ode_rhs(_, y, dy__dt, e, c, s, ix, __):
     """ODE system right-hand-side following eq. (13) in Arabas & Shima 2017
     (https://doi.org/10.5194/npg-24-535-2017)"""
     ρ_d, _, r_w, dr_w__dt, dq_v__dt = e.ode_helper(y, e, c, s, ix)
@@ -300,10 +309,10 @@ def ode_rhs(_, y, dy__dt, e, c, s, ix):
     return dy__dt
 
 
-def stop_cond(_, y, __, e, c, s, ix):
+def stop_cond(_, y, __, e, c, s, ix, ___):
     """returns the time derivative of RH, following eq. 7.22 in Rogers & Yau book;
     the value is used to detect maximal saturation stopping point"""
-    ρ_d, ρ_vs, __, ___, dq_v__dt = e.ode_helper(y, e, c, s, ix)
+    ρ_d, ρ_vs, ____, _____, dq_v__dt = e.ode_helper(y, e, c, s, ix)
     q1 = (c.eps * c.l_v * c.g / c.R_d / c.c_pd / y[ix.T] - c.g / c.R_d) / y[ix.T]
     q2 = ρ_d * (
         1 / ρ_vs + c.eps * c.l_v**2 / y[ix.p_d] / y[ix.T] / c.c_pd
@@ -337,17 +346,43 @@ def initial_condition(e, c, s, ix):
     return y0
 
 
-def solve(*, c, s, ix, y0, stop_at_s_max, method, rtol):
+def jacobian(_, y, __, e, c, s, ix, jac):
+    """for an ODE problem y' = f(y, t) where y = {a,b,c},
+    return a matrix J_{i,j} = \partial f_i / \partial_j
+    where i, j in {a,b,c}
+
+    In this case, an (n+2) x (n+2) matrix is returned
+    where n is the number of size sections, and +2
+    stems from two gas state variables (e.g., T, p).
+    """
+    res = scipy.differentiate.jacobian(
+        lambda x: np.apply_along_axis(partial(ode_rhs, _, Placeholder, __, e, c, s, ix, jac), axis=0, arr=x),
+        y
+    )
+    jac[:,:] = res.df
+    
+    return jac
+
+
+def solve(*, c, s, ix, y0, stop_at_s_max, method, rtol, analytic_jacobian):
     """performs time integration using SciPy's interface to LSODA"""
     with np.errstate(divide="ignore", over="ignore", invalid="ignore"):
         sol = scipy.integrate.solve_ivp(
             ode_rhs,
             (0, s.t_max),
             y0,
-            args=(np.empty(ix.size), eqp, c, s, ix),
+            args=(
+                np.empty(shape=ix.size),
+                eqp,
+                c,
+                s,
+                ix,
+                np.empty(shape=(ix.size, ix.size)) if analytic_jacobian else None,
+            ),
             method=method,
             rtol=rtol,
             events=stop_cond if stop_at_s_max else None,
+            jac=jacobian if analytic_jacobian else None,
         )
     assert sol.success, sol.message
     return sol
