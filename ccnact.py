@@ -63,6 +63,7 @@ def parcel(
     - time coordinate (1D float array);
     - activation status defined by r_w>r_c condition (2D Boolean array);
     - temperature (1D float array).
+    - dry radii (1D float array)
 
     parameters:
     - n_stp: volume concentrations (per mode) at standard temperature and pressure (and RH=0)
@@ -111,7 +112,7 @@ def parcel(
     act = r_w > eqp.r_c(c, s, r_d=s.r_d[:, None], T=T[None, :], κ=s.κ[:, None])
     n_a = act[:, -1] @ s.ξ / s.m_d * c.ρ_stp
     time = sol.t * si.s
-    return n_a, RH, r_w, time, act, T
+    return n_a, RH, r_w, time, act, T, s.r_d
 
 
 def cfg_ccn(
