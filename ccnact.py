@@ -360,7 +360,19 @@ def jacobian(_, y, __, e, c, s, ix, jac):
         y
     )
     jac[:,:] = res.df
-    
+
+    ρ_d, ρ_vs, r_w, dr_w__dt, dq_v__dt = e.ode_helper(y, e, c, s, ix)
+    jac[ix.p_d, ix.p_d] = - s.w * c.g / c.R_d / y[ix.T]
+    jac[ix.p_d, ix.T] = s.w * c.g * y[ix.p_d] / c.R_d / y[ix.T]**2
+    jac[ix.p_d, ix.x] = 0
+
+    dr_w_dt_dp_d = c.D_v / r_w / c.ρ_w * ρ_vs * 0 # TODO dRH_dp_d
+    dp_vs_dT = 0
+    dρ_vs_dT = 1/c.R_v * (- e.p_vs(c, y[ix.T]) / y[ix.T]**2 + 1/y[ix.T] * dp_vs_dT)
+    dr_w_dt_dT = c.D_v / r_w / c.ρ_w * dρ_vs_dT * (e.RH(q_v, ρ_vs, ρ_d) - 1)
+
+    # dr_w_dt_dxi = ..
+
     return jac
 
 
