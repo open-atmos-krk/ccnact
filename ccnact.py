@@ -362,14 +362,29 @@ def jacobian(_, y, __, e, c, s, ix, jac):
     jac[:,:] = res.df
 
     ρ_d, ρ_vs, r_w, dr_w__dt, dq_v__dt = e.ode_helper(y, e, c, s, ix)
+
+    # TODO AJ assert abs(jac[ix.p_d, ix.p_d] old - jac[ix.p_d, ix.p_d] new) < eps
     jac[ix.p_d, ix.p_d] = - s.w * c.g / c.R_d / y[ix.T]
     jac[ix.p_d, ix.T] = s.w * c.g * y[ix.p_d] / c.R_d / y[ix.T]**2
+
     jac[ix.p_d, ix.x] = 0
 
-    dr_w_dt_dp_d = c.D_v / r_w / c.ρ_w * ρ_vs * 0 # TODO dRH_dp_d
-    dp_vs_dT = 0
-    dρ_vs_dT = 1/c.R_v * (- e.p_vs(c, y[ix.T]) / y[ix.T]**2 + 1/y[ix.T] * dp_vs_dT)
-    dr_w_dt_dT = c.D_v / r_w / c.ρ_w * dρ_vs_dT * (e.RH(q_v, ρ_vs, ρ_d) - 1)
+
+    # jac[ix.T, ix.p_d] = 0 # TODO
+    dr_w_dt_dp_d = c.D_v / r_w / c.ρ_w * ρ_vs * 0 # TODO AŻ dRH_dp_d
+    dp_vs_dT = e.p_vs(c, y[ix.T]) * (
+            c.B80_G1 * y[ix.T] / ((y[ix.T] - c.T_0C) + c.B80_G2)
+            + (c.B80_G1 * (y[ix.T] - c.T_0C)) * c.B80_G2 * y[ix.T] / (c.B80_G2 * (y[ix.T] - c.T_0C))
+    )
+    dρ_vs_dT = 1 / c.R_v * (- e.p_vs(c, y[ix.T]) / y[ix.T]**2 + 1/y[ix.T] * dp_vs_dT)
+
+    dRH_eq_dT = - e.RH_eq(c, s, r_w, s.r_d, y[ix.T]) * 2 * s.σ_w / (c.R_v * y[ix.T]**2 * c.ρ_w * r_w) # TODO AŻ
+
+    # jac[ix.T, ix.T] = 1 / c.c_pd * c.l_v * 4 * np.pi * s.ξ  @ r_w**2 * (1/r_w * c.D_v / c.ρ_w) * (
+    #         dρ_vs_dT * (e.RH_eq(c, s, r_w, s.r_d, y[ix.T]) - 1) + ρ_vs * dRH_eq_dT
+    # )
+    # jac[ix.T, ix.x] = ...
+    # dr_w_dt_dT = c.D_v / r_w / c.ρ_w * dρ_vs_dT * (e.RH(q_v, ρ_vs, ρ_d) - 1)
 
     # dr_w_dt_dxi = ..
 
