@@ -97,10 +97,11 @@ def test_case_from_the_paper():
         p_d = sol.y[ix.p_d] * si.Pa
         temp = sol.y[ix.T] * si.K
         r_w = eqp.r_w(c, x=sol.y[ix.x])
+        q_v = s.q_t - eqp.q_l(c, s, r_w=r_w)
         rh = eqp.RH(
-            q_v=s.q_t - eqp.q_l(c, s, r_w=r_w),
+            q_v=q_v,
             ρ_vs=eqp.ρ_v(c, p_v=eqp.p_vs(c, T=temp), T=temp),
-            ρ_d=eqp.ρ_d(c, p_d=p_d, T=temp),
+            ρ_d=eqp.ρ_d(c, p_d=p, T=eqp.T_v(c, T=temp, q_v=q_v)),
         )
         r_c = eqp.r_c(c, s, r_d=s.r_d[:, None], T=temp[None, :], κ=s.κ[:, None])
 
