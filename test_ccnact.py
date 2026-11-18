@@ -97,12 +97,13 @@ def test_case_from_the_paper():
         p_d = sol.y[ix.p_d] * si.Pa
         temp = sol.y[ix.T] * si.K
         r_w = eqp.r_w(c, x=sol.y[ix.x])
+        q_v = s.q_t - eqp.q_l(c, s, r_w=r_w)
         rh = eqp.RH(
-            q_v=s.q_t - eqp.q_l(c, s, r_w=r_w),
+            q_v=q_v,
             ρ_vs=eqp.ρ_v(c, p_v=eqp.p_vs(c, T=temp), T=temp),
-            ρ_d=eqp.ρ_d(c, p_d=p_d, T=temp),
+            ρ_d=eqp.ρ_d(c, p_d=p, T=eqp.T_v(c, T=temp, q_v=q_v)),
         )
-        r_c = eqp.r_c(c, s, r_d=s.r_d[:, None], T=temp[None, :])
+        r_c = eqp.r_c(c, s, r_d=s.r_d[:, None], T=temp[None, :], κ=s.κ[:, None])
 
         n_a = (r_w[:, -1] > r_c[:, -1]) @ s.ξ / s.m_d * c.ρ_stp
         err = np.amax(s.ξ) / s.m_d * c.ρ_stp
@@ -118,11 +119,11 @@ def test_case_from_the_paper():
 def test_parcel(stop_at_s_max):
     """runs the parcel() interface with arbitrary parameters asserting on the
     returned values"""
-    n1_act, rh, _, _, _ = parcel(
+    n1_act, rh, _, _, _, _ = parcel(
         w=1,
         kappa=(0.8, 0.8),
         meanr=(3e-8, 3e-8),
-        n_tot=(0.5e9, 0.5e9),
+        n_stp=(0.5e9, 0.5e9),
         gstdv=(1.5, 1.5),
         n_bins=100,
         RH=0.99,

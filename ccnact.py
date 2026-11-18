@@ -14,7 +14,7 @@ used within tests, by default all computations are done on pure floats).
 import math
 from collections import namedtuple
 from importlib.metadata import PackageNotFoundError, version
-from typing import Iterable
+from typing import Iterable, Optional
 
 import numpy as np
 import pint
@@ -33,7 +33,8 @@ def parcel(
     sigma: float = 0.072,
     kappa: Iterable[float],
     meanr: Iterable[float],
-    n_tot: Iterable[float],
+    n_stp: Optional[Iterable[float]] = None,
+    n_vol: Optional[Iterable[float]] = None,
     gstdv: Iterable[float],
     MAC: float = 1,
     n_bins: float,
@@ -54,18 +55,31 @@ def parcel(
     method: str = "LSODA",
     rtol: float = 1e-4,
 ):
-    """runs a simulation for the given parameters and returns a tuple of:
+    """
+    runs a simulation for the given parameters and returns a tuple of:
     - concentration of droplets with r_wet>r_crit at final timestep (in metre^{-3} @ STP);
     - relative humidity (saturation) profile during the ascent (1D float array);
     - wet radii (2D float array);
     - time coordinate (1D float array);
-    - activation status defined by r_w>r_c condition (2D Boolea array).
+    - activation status defined by r_w>r_c condition (2D Boolean array);
+    - temperature (1D float array).
+    - dry radii (1D float array)
+
+    parameters:
+    - n_stp: volume concentrations (per mode) at standard temperature and pressure (and RH=0)
     """
-    assert len(kappa) == len(meanr) == len(n_tot) == len(gstdv)
-    assert all(np.asarray(kappa) == kappa[0])  # TODO
+    c, si = constants(R_d=R_d, R_v=R_v, l_v=l_v, g=g, c_pd=c_pd, rho_l=rho_l, D_v=D_v)
+
+    assert n_stp is None or n_vol is None
+    if n_vol is not None:
+        p_v = RH * eqp.p_vs(c, T)
+        ρ_d = eqp.ρ_d(c, p - p_v, T)
+        ρ_v = eqp.ρ_v(c, p_v, T)
+        n_stp = tuple(n * c.ρ_stp / (ρ_d + ρ_v) for n in n_vol)
+
+    assert len(kappa) == len(meanr) == len(n_stp) == len(gstdv)
     assert MAC == 1  # TODO
 
-    c, si = constants(R_d=R_d, R_v=R_v, l_v=l_v, g=g, c_pd=c_pd, rho_l=rho_l, D_v=D_v)
     _, ix, s = cfg_ccn(
         c,
         si,
@@ -76,7 +90,7 @@ def parcel(
         n_sd=n_bins,
         kappa=kappa,
         meanr=meanr,
-        n_tot=n_tot,
+        n_stp=n_stp,
         gstdv=gstdv,
         nt=nt,
         dt=dt or 1 * si.s,
@@ -87,18 +101,19 @@ def parcel(
         c=c, s=s, ix=ix, y0=y0, stop_at_s_max=stop_at_s_max, method=method, rtol=rtol
     )
 
-    p_d = sol.y[ix.p_d] * si.Pa
+    p = sol.y[ix.p] * si.Pa
     T = sol.y[ix.T] * si.K
     r_w = eqp.r_w(c, x=sol.y[ix.x])
+    q_v = s.q_t - eqp.q_l(c, s, r_w=r_w)
     RH = eqp.RH(
-        q_v=s.q_t - eqp.q_l(c, s, r_w=r_w),
+        q_v=q_v,
         ρ_vs=eqp.ρ_v(c, p_v=eqp.p_vs(c, T=T), T=T),
-        ρ_d=eqp.ρ_d(c, p_d=p_d, T=T),
+        ρ_d=eqp.ρ_d(c, p_d=p, T=eqp.T_v(c, T=T, q_v=q_v)) / (1 + q_v),
     )
-    act = r_w > eqp.r_c(c, s, r_d=s.r_d[:, None], T=T[None, :])
+    act = r_w > eqp.r_c(c, s, r_d=s.r_d[:, None], T=T[None, :], κ=s.κ[:, None])
     n_a = act[:, -1] @ s.ξ / s.m_d * c.ρ_stp
     time = sol.t * si.s
-    return n_a, RH, r_w, time, act
+    return n_a, RH, r_w, time, act, T, s.r_d
 
 
 def cfg_ccn(
@@ -113,7 +128,7 @@ def cfg_ccn(
     n_sd=44,
     meanr=(3.2e-8,),
     gstdv=(1.75,),
-    n_tot=(8e9,),
+    n_stp=(8e9,),
     kappa=(0.7,),
     nt=150,
     dt=1,
@@ -128,17 +143,14 @@ def cfg_ccn(
                 s := math.log(gstdv[m]),
                 scale=(meanr[m]) / math.exp((s**2) / 2),
             )
-            for m in range(len(n_tot))
+            for m in range(len(n_stp))
         ),
-        "norm": tuple(n_tot[m] * v_m3_stp for m in range(len(n_tot))),
+        "norm": tuple(n_stp[m] * v_m3_stp for m in range(len(n_stp))),
         "Δv_m3_stp": v_m3_stp,
         "n_sd": n_sd,
-        "κ": kappa[0],
     }
-    cfg["r_d"], cfg["ξ"] = quantile_sample(
-        dist=cfg["dist"],
-        n_sd=cfg["n_sd"],
-        norm=cfg["norm"],
+    cfg["r_d"], cfg["ξ"], cfg["κ"] = quantile_sample(
+        dist=cfg["dist"], n_sd=cfg["n_sd"], norm=cfg["norm"], kappa=kappa
     )
     e = RH * eqp.p_vs(c, T * si.K)
     q_t = c.eps * e / (p * si.Pa - e)
@@ -149,7 +161,7 @@ def cfg_ccn(
             (
                 ix := {
                     "x": slice(0, cfg["n_sd"]),
-                    "p_d": cfg["n_sd"],
+                    "p": cfg["n_sd"],
                     "T": cfg["n_sd"] + 1,
                     "size": cfg["n_sd"] + 2,
                 }
@@ -159,7 +171,7 @@ def cfg_ccn(
             "Setup",
             (
                 s := {
-                    "p_d0": p * si.Pa - e,  # initial dry pres.
+                    "p_0": p * si.Pa,  # initial presure
                     "t_max": nt * dt * si.s,  # temporal extent
                     "q_t": q_t,  # total water
                     "w": w * si.m / si.s,  # updraft speed
@@ -175,7 +187,7 @@ def cfg_ccn(
     )
 
 
-def quantile_sample(*, dist, n_sd, norm):
+def quantile_sample(*, dist, n_sd, norm, kappa):
     """samples muti-mode lognormal size distribution on `n_sd` size sections
     with a uniform-in-multiplicity-per-mode layout, in which each mode is
     represented with `n_sd // len(dist)` super-particles"""
@@ -191,6 +203,7 @@ def quantile_sample(*, dist, n_sd, norm):
                 for m in range(n_modes)
             )
         ),
+        np.concatenate(tuple(np.full(n_per_mode, kappa[m]) for m in range(n_modes))),
     )
 
 
@@ -240,30 +253,29 @@ def constants(*, R_d=None, R_v=None, l_v=None, g=None, c_pd=None, rho_l=None, D_
 
 def __ode_helper(y, e, c, s, ix):
     """common calculations for ODE solution"""
-    ρ_d = e.ρ_d(c, p_d=y[ix.p_d], T=y[ix.T])
-    ρ_vs = e.ρ_v(c, p_v=e.p_vs(c, T=y[ix.T]), T=y[ix.T])
     r_w = e.r_w(c, x=y[ix.x])
+    q_v = s.q_t - e.q_l(c, s, r_w=r_w)
+    ρ = e.ρ_d(c, p_d=y[ix.p], T=e.T_v(c, y[ix.T], q_v))
+    ρ_vs = e.ρ_v(c, p_v=e.p_vs(c, T=y[ix.T]), T=y[ix.T])
     dr_w__dt = e.dr_w__dt(
         c,
         r_w=r_w,
-        ρ_v=ρ_vs * e.RH(ρ_vs=ρ_vs, ρ_d=ρ_d, q_v=s.q_t - e.q_l(c, s, r_w=r_w)),
-        ρ_o=ρ_vs * e.RH_eq(c, s, r_w=r_w, r_d=s.r_d, T=y[ix.T]),
+        ρ_v=ρ_vs * e.RH(ρ_vs=ρ_vs, ρ_d=ρ / (1 + q_v), q_v=q_v),
+        ρ_o=ρ_vs * e.RH_eq(c, s, r_w=r_w, r_d=s.r_d, T=y[ix.T], κ=s.κ),
     )
     dq_v__dt = e.dq_v__dt(c, s, r_w=r_w, dr_w__dt=dr_w__dt)
-    return ρ_d, ρ_vs, r_w, dr_w__dt, dq_v__dt
+    return ρ, ρ_vs, r_w, dr_w__dt, dq_v__dt
 
 
 eqp = namedtuple(
     "Eqs",
     (
         eqp := {
-            "RH_eq": lambda c, s, r_w, r_d, T: (r_w**3 - r_d**3)
-            / (r_w**3 - r_d**3 * (1 - s.κ))
+            "RH_eq": lambda c, s, r_w, r_d, T, κ: (r_w**3 - r_d**3)
+            / (r_w**3 - r_d**3 * (1 - κ))
             * np.exp(2 * s.σ_w / (c.R_v * T * c.ρ_w * r_w)),
-            "dp_d__dt": lambda c, p, ρ_d: -p.w * ρ_d * c.g,
-            "dT__dt": lambda c, dp_d__dt, dq_v__dt, ρ_d: (
-                dp_d__dt / ρ_d - dq_v__dt * c.l_v
-            )
+            "dp__dt": lambda c, p, ρ: -p.w * ρ * c.g,
+            "dT__dt": lambda c, dp__dt, dq_v__dt, ρ: (dp__dt / ρ - dq_v__dt * c.l_v)
             / c.c_pd,
             "dr_w__dt": lambda c, r_w, ρ_v, ρ_o: c.D_v / c.ρ_w * (ρ_v - ρ_o) / r_w,
             "x": lambda c, r_w: np.log(r_w / c.r_0),
@@ -280,10 +292,13 @@ eqp = namedtuple(
             * (s.ξ * r_w**2 @ dr_w__dt)
             / s.m_d
             * c.ρ_w,
-            "r_c": lambda c, s, r_d, T: (
-                3 * s.κ * r_d**3 / (2 * s.σ_w / (c.R_v * T * c.ρ_w))
+            "r_c": lambda c, s, r_d, T, κ: (
+                3 * κ * r_d**3 / (2 * s.σ_w / (c.R_v * T * c.ρ_w))
             )
             ** 0.5,
+            "T_v": lambda c, T, q_v: T
+            * (1 + q_v / c.eps)
+            / (1 + q_v),  # T*(1+0.61*q_v)
             "ode_helper": __ode_helper,
         }
     ).keys(),
@@ -292,22 +307,21 @@ eqp = namedtuple(
 
 def ode_rhs(_, y, dy__dt, e, c, s, ix):
     """ODE system right-hand-side following eq. (13) in Arabas & Shima 2017
-    (https://doi.org/10.5194/npg-24-535-2017)"""
-    ρ_d, _, r_w, dr_w__dt, dq_v__dt = e.ode_helper(y, e, c, s, ix)
-    dy__dt[ix.p_d] = e.dp_d__dt(c, s, ρ_d=ρ_d)
+    (https://doi.org/10.5194/npg-24-535-2017) but with full air density
+    instead of dry air density"""
+    ρ, _, r_w, dr_w__dt, dq_v__dt = e.ode_helper(y, e, c, s, ix)
+    dy__dt[ix.p] = e.dp__dt(c, s, ρ=ρ)
     dy__dt[ix.x] = dr_w__dt / e.dr_w__dx(r_w=r_w)
-    dy__dt[ix.T] = e.dT__dt(c, dp_d__dt=dy__dt[ix.p_d], dq_v__dt=dq_v__dt, ρ_d=ρ_d)
+    dy__dt[ix.T] = e.dT__dt(c, dp__dt=dy__dt[ix.p], dq_v__dt=dq_v__dt, ρ=ρ)
     return dy__dt
 
 
 def stop_cond(_, y, __, e, c, s, ix):
     """returns the time derivative of RH, following eq. 7.22 in Rogers & Yau book;
     the value is used to detect maximal saturation stopping point"""
-    ρ_d, ρ_vs, __, ___, dq_v__dt = e.ode_helper(y, e, c, s, ix)
+    ρ, ρ_vs, __, ___, dq_v__dt = e.ode_helper(y, e, c, s, ix)
     q1 = (c.eps * c.l_v * c.g / c.R_d / c.c_pd / y[ix.T] - c.g / c.R_d) / y[ix.T]
-    q2 = ρ_d * (
-        1 / ρ_vs + c.eps * c.l_v**2 / y[ix.p_d] / y[ix.T] / c.c_pd
-    )  # TODO: rho vs. rho_d; p vs. pd
+    q2 = ρ * (1 / ρ_vs + c.eps * c.l_v**2 / y[ix.p] / y[ix.T] / c.c_pd)
     return q1 * s.w + q2 * dq_v__dt
 
 
@@ -319,19 +333,21 @@ def initial_condition(e, c, s, ix):
     cmn = {"c": c, "T": s.T_0}
     rh = e.RH(
         q_v=s.q_t,
-        ρ_d=e.ρ_d(p_d=s.p_d0, **cmn),
+        ρ_d=e.ρ_d(
+            p_d=s.p_0, c=c, T=e.T_v(c, T=s.T_0, q_v=s.q_t)
+        ),  # NOTE ignoring water content of aerosol
         ρ_vs=e.ρ_v(p_v=e.p_vs(**cmn), **cmn),
     )
     cmn |= {"s": s}
     root = scipy_optimize_elementwise.find_root(
-        lambda x, r_d: rh - e.RH_eq(r_w=x, r_d=r_d, **cmn),
-        (s.r_d, e.r_c(r_d=s.r_d, **cmn)),
-        args=(s.r_d,),
+        lambda x, r_d, κ: rh - e.RH_eq(r_w=x, r_d=r_d, κ=κ, **cmn),
+        (s.r_d, e.r_c(r_d=s.r_d, κ=s.κ, **cmn)),
+        args=(s.r_d, s.κ),
     )
     assert all(root.success)
 
     y0 = np.empty(ix.size)
-    y0[ix.p_d] = s.p_d0
+    y0[ix.p] = s.p_0
     y0[ix.T] = s.T_0
     y0[ix.x] = e.x(c, r_w=root.x)
     return y0
