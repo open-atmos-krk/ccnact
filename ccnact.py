@@ -362,32 +362,78 @@ def jacobian(_, y, __, e, c, s, ix, jac):
     jac[:,:] = res.df
 
     ρ_d, ρ_vs, r_w, dr_w__dt, dq_v__dt = e.ode_helper(y, e, c, s, ix)
+    q_v = s.q_t - e.q_l(c, s, r_w=r_w)
+    RH = e.RH(q_v=q_v, ρ_vs=ρ_vs, ρ_d=ρ_d)
+    RH_eq = e.RH_eq(c, s, r_w=r_w, r_d=s.r_d, T=y[ix.T])
 
     # TODO AJ assert abs(jac[ix.p_d, ix.p_d] old - jac[ix.p_d, ix.p_d] new) < eps
     jac[ix.p_d, ix.p_d] = - s.w * c.g / c.R_d / y[ix.T]
     jac[ix.p_d, ix.T] = s.w * c.g * y[ix.p_d] / c.R_d / y[ix.T]**2
-
     jac[ix.p_d, ix.x] = 0
 
-
-    # jac[ix.T, ix.p_d] = 0 # TODO
-    dr_w_dt_dp_d = c.D_v / r_w / c.ρ_w * ρ_vs * 0 # TODO AŻ dRH_dp_d
-    dp_vs_dT = e.p_vs(c, y[ix.T]) * (
-            c.B80_G1 * y[ix.T] / ((y[ix.T] - c.T_0C) + c.B80_G2)
-            + (c.B80_G1 * (y[ix.T] - c.T_0C)) * c.B80_G2 * y[ix.T] / (c.B80_G2 * (y[ix.T] - c.T_0C))
+    dp_vs_dT = (
+            e.p_vs(c, y[ix.T]) * c.B80_G1 * c.B80_G2
+            / (y[ix.T] - c.T_0C + c.B80_G2) ** 2
     )
-    dρ_vs_dT = 1 / c.R_v * (- e.p_vs(c, y[ix.T]) / y[ix.T]**2 + 1/y[ix.T] * dp_vs_dT)
-
-    dRH_eq_dT = - e.RH_eq(c, s, r_w, s.r_d, y[ix.T]) * 2 * s.σ_w / (c.R_v * y[ix.T]**2 * c.ρ_w * r_w) # TODO AŻ
-
-    # jac[ix.T, ix.T] = 1 / c.c_pd * c.l_v * 4 * np.pi * s.ξ  @ r_w**2 * (1/r_w * c.D_v / c.ρ_w) * (
-    #         dρ_vs_dT * (e.RH_eq(c, s, r_w, s.r_d, y[ix.T]) - 1) + ρ_vs * dRH_eq_dT
+    # ERR (just for comparison)
+    # dp_vs_dT = e.p_vs(c, y[ix.T]) * (
+    #         c.B80_G1 * y[ix.T] / ((y[ix.T] - c.T_0C) + c.B80_G2)
+    #         + (c.B80_G1 * (y[ix.T] - c.T_0C)) * c.B80_G2 * y[ix.T] / (c.B80_G2 * (y[ix.T] - c.T_0C))
     # )
-    # jac[ix.T, ix.x] = ...
-    # dr_w_dt_dT = c.D_v / r_w / c.ρ_w * dρ_vs_dT * (e.RH(q_v, ρ_vs, ρ_d) - 1)
+    dρ_vs_dT = (dp_vs_dT / y[ix.T] - e.p_vs(c, y[ix.T]) / y[ix.T]**2) / c.R_v
+    dRH_dp_d = RH / y[ix.p_d]
+    dRH_dT = - RH * dp_vs_dT / e.p_vs(c, y[ix.T])
+    dRH_dx = (
+        -ρ_d / ρ_vs
+        * (4 * np.pi * c.ρ_w / s.m_d)
+        * s.ξ * r_w**3
+    )
 
-    # dr_w_dt_dxi = ..
+    A = 2 * s.σ_w / (c.R_v * c.ρ_w)
+    dRH_eq_dT = - RH_eq * A / (y[ix.T]**2 * r_w)
 
+    r3 = r_w ** 3
+    rd3 = s.r_d ** 3
+
+    dRH_eq_dx = RH_eq * (
+            3 * r3 / (r3 - rd3)
+            - 3 * r3 / (r3 - rd3 * (1 - s.κ))
+            - A / (y[ix.T] * r_w)
+    )
+
+    eye = np.eye(len(r_w))
+    K = c.D_v * ρ_vs / (c.ρ_w * r_w ** 2)
+    F = dr_w__dt / r_w
+    dF_dx = (
+            K[:, None]
+            * (
+                    dRH_dx[None, :]
+                    - eye * dRH_eq_dx[:, None]
+            )
+            - 2 * eye * F[:, None]
+    )
+    dF_dp_d = c.D_v * ρ_vs / (c.ρ_w * r_w ** 2) * dRH_dp_d
+    dF_dT = (
+            c.D_v / (c.ρ_w * r_w ** 2)
+            * (
+                    dρ_vs_dT * (RH - RH_eq)
+                    + ρ_vs * (dRH_dT - dRH_eq_dT)
+            )
+    )
+
+    jac[ix.x, ix.x] = dF_dx
+    jac[ix.x, ix.p_d] = dF_dp_d
+    jac[ix.x, ix.T] = dF_dT
+
+    weights = s.ξ * r_w ** 3
+    C = 4 * np.pi * c.ρ_w / s.m_d
+    ddq_v_dx = -C * weights @ dF_dx + 3 * weights * F
+    ddq_v_dp_d = -C * weights @ dF_dp_d
+    ddq_v_dT = -C * weights @ dF_dT
+
+    jac[ix.T, ix.x] = -c.l_v / c.c_pd * ddq_v_dx
+    jac[ix.T, ix.p_d] = -c.l_v / c.c_pd * ddq_v_dp_d
+    jac[ix.T, ix.T] = -c.l_v / c.c_pd * ddq_v_dT
     return jac
 
 
