@@ -54,14 +54,15 @@ def parcel(
     stop_at_s_max: bool = False,
     method: str = "LSODA",
     rtol: float = 1e-4,
-    analytic_jacobian=False,
+    analytic_jacobian=0,
 ):
     """runs a simulation for the given parameters and returns a tuple of:
     - concentration of droplets with r_wet>r_crit at final timestep (in metre^{-3} @ STP);
     - relative humidity (saturation) profile during the ascent (1D float array);
     - wet radii (2D float array);
     - time coordinate (1D float array);
-    - activation status defined by r_w>r_c condition (2D Boolea array).
+    - activation status defined by r_w>r_c condition (2D Boolea array);
+    -
     """
     assert len(kappa) == len(meanr) == len(n_tot) == len(gstdv)
     assert all(np.asarray(kappa) == kappa[0])  # TODO
@@ -355,11 +356,7 @@ def jacobian(_, y, __, e, c, s, ix, jac):
     where n is the number of size sections, and +2
     stems from two gas state variables (e.g., T, p).
     """
-    res = scipy.differentiate.jacobian(
-        lambda x: np.apply_along_axis(partial(ode_rhs, _, Placeholder, __, e, c, s, ix, jac), axis=0, arr=x),
-        y
-    )
-    jac[:,:] = res.df
+
 
     ρ_d, ρ_vs, r_w, dr_w__dt, dq_v__dt = e.ode_helper(y, e, c, s, ix)
     q_v = s.q_t - e.q_l(c, s, r_w=r_w)
@@ -375,11 +372,6 @@ def jacobian(_, y, __, e, c, s, ix, jac):
             e.p_vs(c, y[ix.T]) * c.B80_G1 * c.B80_G2
             / (y[ix.T] - c.T_0C + c.B80_G2) ** 2
     )
-    # ERR (just for comparison)
-    # dp_vs_dT = e.p_vs(c, y[ix.T]) * (
-    #         c.B80_G1 * y[ix.T] / ((y[ix.T] - c.T_0C) + c.B80_G2)
-    #         + (c.B80_G1 * (y[ix.T] - c.T_0C)) * c.B80_G2 * y[ix.T] / (c.B80_G2 * (y[ix.T] - c.T_0C))
-    # )
     dρ_vs_dT = (dp_vs_dT / y[ix.T] - e.p_vs(c, y[ix.T]) / y[ix.T]**2) / c.R_v
     dRH_dp_d = RH / y[ix.p_d]
     dRH_dT = - RH * dp_vs_dT / e.p_vs(c, y[ix.T])
@@ -436,10 +428,30 @@ def jacobian(_, y, __, e, c, s, ix, jac):
     jac[ix.T, ix.T] = -c.l_v / c.c_pd * ddq_v_dT
     return jac
 
+def jacobian_scipy(_, y, __, e, c, s, ix, jac):
+    res = scipy.differentiate.jacobian(
+        lambda x: np.apply_along_axis(partial(ode_rhs, _, Placeholder, __, e, c, s, ix, jac), axis=0, arr=x),
+        y
+    )
+    jac = res.df
+    return jac
 
 def solve(*, c, s, ix, y0, stop_at_s_max, method, rtol, analytic_jacobian):
-    """performs time integration using SciPy's interface to LSODA"""
+    """performs time integration using SciPy's interface to LSODA
+    analytic_jacobian:
+        - 0: when False
+        - 1: scipy jacobian
+        - 2: our analytical jacobian
+    #TODO set only two options for analytical jacobian: True and False
+    """
     with np.errstate(divide="ignore", over="ignore", invalid="ignore"):
+        if analytic_jacobian==0:
+            jac = None
+        elif analytic_jacobian==1:
+            jac = jacobian_scipy
+        else:
+            jac = jacobian
+
         sol = scipy.integrate.solve_ivp(
             ode_rhs,
             (0, s.t_max),
@@ -450,12 +462,12 @@ def solve(*, c, s, ix, y0, stop_at_s_max, method, rtol, analytic_jacobian):
                 c,
                 s,
                 ix,
-                np.empty(shape=(ix.size, ix.size)) if analytic_jacobian else None,
+                np.empty(shape=(ix.size, ix.size)) if analytic_jacobian != 0 else None,
             ),
             method=method,
             rtol=rtol,
             events=stop_cond if stop_at_s_max else None,
-            jac=jacobian if analytic_jacobian else None,
+            jac=jac,
         )
     assert sol.success, sol.message
     return sol
