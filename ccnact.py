@@ -20,6 +20,7 @@ import numpy as np
 import pint
 import scipy
 from scipy.optimize import elementwise as scipy_optimize_elementwise
+from functools import partial,Placeholder
 
 try:
     __version__ = version(__name__)
@@ -53,13 +54,15 @@ def parcel(
     stop_at_s_max: bool = False,
     method: str = "LSODA",
     rtol: float = 1e-4,
+    analytic_jacobian=0,
 ):
     """runs a simulation for the given parameters and returns a tuple of:
     - concentration of droplets with r_wet>r_crit at final timestep (in metre^{-3} @ STP);
     - relative humidity (saturation) profile during the ascent (1D float array);
     - wet radii (2D float array);
     - time coordinate (1D float array);
-    - activation status defined by r_w>r_c condition (2D Boolea array).
+    - activation status defined by r_w>r_c condition (2D Boolea array);
+    -
     """
     assert len(kappa) == len(meanr) == len(n_tot) == len(gstdv)
     assert all(np.asarray(kappa) == kappa[0])  # TODO
@@ -84,7 +87,14 @@ def parcel(
     )
     y0 = initial_condition(eqp, c, s, ix)
     sol = solve(
-        c=c, s=s, ix=ix, y0=y0, stop_at_s_max=stop_at_s_max, method=method, rtol=rtol
+        c=c,
+        s=s,
+        ix=ix,
+        y0=y0,
+        stop_at_s_max=stop_at_s_max,
+        method=method,
+        rtol=rtol,
+        analytic_jacobian=analytic_jacobian,
     )
 
     p_d = sol.y[ix.p_d] * si.Pa
@@ -290,7 +300,7 @@ eqp = namedtuple(
 )(**eqp)
 
 
-def ode_rhs(_, y, dy__dt, e, c, s, ix):
+def ode_rhs(_, y, dy__dt, e, c, s, ix, __):
     """ODE system right-hand-side following eq. (13) in Arabas & Shima 2017
     (https://doi.org/10.5194/npg-24-535-2017)"""
     ρ_d, _, r_w, dr_w__dt, dq_v__dt = e.ode_helper(y, e, c, s, ix)
@@ -300,10 +310,10 @@ def ode_rhs(_, y, dy__dt, e, c, s, ix):
     return dy__dt
 
 
-def stop_cond(_, y, __, e, c, s, ix):
+def stop_cond(_, y, __, e, c, s, ix, ___):
     """returns the time derivative of RH, following eq. 7.22 in Rogers & Yau book;
     the value is used to detect maximal saturation stopping point"""
-    ρ_d, ρ_vs, __, ___, dq_v__dt = e.ode_helper(y, e, c, s, ix)
+    ρ_d, ρ_vs, ____, _____, dq_v__dt = e.ode_helper(y, e, c, s, ix)
     q1 = (c.eps * c.l_v * c.g / c.R_d / c.c_pd / y[ix.T] - c.g / c.R_d) / y[ix.T]
     q2 = ρ_d * (
         1 / ρ_vs + c.eps * c.l_v**2 / y[ix.p_d] / y[ix.T] / c.c_pd
@@ -337,17 +347,127 @@ def initial_condition(e, c, s, ix):
     return y0
 
 
-def solve(*, c, s, ix, y0, stop_at_s_max, method, rtol):
-    """performs time integration using SciPy's interface to LSODA"""
+def jacobian(_, y, __, e, c, s, ix, jac):
+    """for an ODE problem y' = f(y, t) where y = {a,b,c},
+    return a matrix J_{i,j} = \partial f_i / \partial_j
+    where i, j in {a,b,c}
+
+    In this case, an (n+2) x (n+2) matrix is returned
+    where n is the number of size sections, and +2
+    stems from two gas state variables (e.g., T, p).
+    """
+
+
+    ρ_d, ρ_vs, r_w, dr_w__dt, dq_v__dt = e.ode_helper(y, e, c, s, ix)
+    q_v = s.q_t - e.q_l(c, s, r_w=r_w)
+    RH = e.RH(q_v=q_v, ρ_vs=ρ_vs, ρ_d=ρ_d)
+    RH_eq = e.RH_eq(c, s, r_w=r_w, r_d=s.r_d, T=y[ix.T])
+
+    # TODO AJ assert abs(jac[ix.p_d, ix.p_d] old - jac[ix.p_d, ix.p_d] new) < eps
+    jac[ix.p_d, ix.p_d] = - s.w * c.g / c.R_d / y[ix.T]
+    jac[ix.p_d, ix.T] = s.w * c.g * y[ix.p_d] / c.R_d / y[ix.T]**2
+    jac[ix.p_d, ix.x] = 0
+
+    dp_vs_dT = (
+            e.p_vs(c, y[ix.T]) * c.B80_G1 * c.B80_G2
+            / (y[ix.T] - c.T_0C + c.B80_G2) ** 2
+    )
+    dρ_vs_dT = (dp_vs_dT / y[ix.T] - e.p_vs(c, y[ix.T]) / y[ix.T]**2) / c.R_v
+    dRH_dp_d = RH / y[ix.p_d]
+    dRH_dT = - RH * dp_vs_dT / e.p_vs(c, y[ix.T])
+    dRH_dx = (
+        -ρ_d / ρ_vs
+        * (4 * np.pi * c.ρ_w / s.m_d)
+        * s.ξ * r_w**3
+    )
+
+    A = 2 * s.σ_w / (c.R_v * c.ρ_w)
+    dRH_eq_dT = - RH_eq * A / (y[ix.T]**2 * r_w)
+
+    r3 = r_w ** 3
+    rd3 = s.r_d ** 3
+
+    dRH_eq_dx = RH_eq * (
+            3 * r3 / (r3 - rd3)
+            - 3 * r3 / (r3 - rd3 * (1 - s.κ))
+            - A / (y[ix.T] * r_w)
+    )
+
+    eye = np.eye(len(r_w))
+    K = c.D_v * ρ_vs / (c.ρ_w * r_w ** 2)
+    F = dr_w__dt / r_w
+    dF_dx = (
+            K[:, None]
+            * (
+                    dRH_dx[None, :]
+                    - eye * dRH_eq_dx[:, None]
+            )
+            - 2 * eye * F[:, None]
+    )
+    dF_dp_d = c.D_v * ρ_vs / (c.ρ_w * r_w ** 2) * dRH_dp_d
+    dF_dT = (
+            c.D_v / (c.ρ_w * r_w ** 2)
+            * (
+                    dρ_vs_dT * (RH - RH_eq)
+                    + ρ_vs * (dRH_dT - dRH_eq_dT)
+            )
+    )
+
+    jac[ix.x, ix.x] = dF_dx
+    jac[ix.x, ix.p_d] = dF_dp_d
+    jac[ix.x, ix.T] = dF_dT
+
+    weights = s.ξ * r_w ** 3
+    C = 4 * np.pi * c.ρ_w / s.m_d
+    ddq_v_dx = -C * weights @ dF_dx + 3 * weights * F
+    ddq_v_dp_d = -C * weights @ dF_dp_d
+    ddq_v_dT = -C * weights @ dF_dT
+
+    jac[ix.T, ix.x] = -c.l_v / c.c_pd * ddq_v_dx
+    jac[ix.T, ix.p_d] = -c.l_v / c.c_pd * ddq_v_dp_d
+    jac[ix.T, ix.T] = -c.l_v / c.c_pd * ddq_v_dT
+    return jac
+
+def jacobian_scipy(_, y, __, e, c, s, ix, jac):
+    res = scipy.differentiate.jacobian(
+        lambda x: np.apply_along_axis(partial(ode_rhs, _, Placeholder, __, e, c, s, ix, jac), axis=0, arr=x),
+        y
+    )
+    jac = res.df
+    return jac
+
+def solve(*, c, s, ix, y0, stop_at_s_max, method, rtol, analytic_jacobian):
+    """performs time integration using SciPy's interface to LSODA
+    analytic_jacobian:
+        - 0: when False
+        - 1: scipy jacobian
+        - 2: our analytical jacobian
+    #TODO set only two options for analytical jacobian: True and False
+    """
     with np.errstate(divide="ignore", over="ignore", invalid="ignore"):
+        if analytic_jacobian==0:
+            jac = None
+        elif analytic_jacobian==1:
+            jac = jacobian_scipy
+        else:
+            jac = jacobian
+
         sol = scipy.integrate.solve_ivp(
             ode_rhs,
             (0, s.t_max),
             y0,
-            args=(np.empty(ix.size), eqp, c, s, ix),
+            args=(
+                np.empty(shape=ix.size),
+                eqp,
+                c,
+                s,
+                ix,
+                np.empty(shape=(ix.size, ix.size)) if analytic_jacobian != 0 else None,
+            ),
             method=method,
             rtol=rtol,
             events=stop_cond if stop_at_s_max else None,
+            jac=jac,
         )
     assert sol.success, sol.message
     return sol

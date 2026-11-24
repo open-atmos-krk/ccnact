@@ -115,30 +115,11 @@ def test_case_from_the_paper():
 
 
 @pytest.mark.parametrize("stop_at_s_max", (True, False))
-def test_parcel(stop_at_s_max):
+def test_parcel(stop_at_s_max, example_parameters):
     """runs the parcel() interface with arbitrary parameters asserting on the
     returned values"""
     n1_act, rh, _, _, _ = parcel(
-        w=1,
-        kappa=(0.8, 0.8),
-        meanr=(3e-8, 3e-8),
-        n_tot=(0.5e9, 0.5e9),
-        gstdv=(1.5, 1.5),
-        n_bins=100,
-        RH=0.99,
-        T=300,
-        p=1e5,
-        MAC=1,
-        sigma=0.072,
-        dt=2,
-        nt=100,
-        R_d=287.0558,
-        R_v=461.5,
-        l_v=2500712,
-        g=9.80665,
-        c_pd=1004.6,
-        rho_l=1,
-        D_v=2.26e-05,
+        **example_parameters,
         stop_at_s_max=stop_at_s_max,
     )
     np.testing.assert_approx_equal(max(rh), 1.002026)
