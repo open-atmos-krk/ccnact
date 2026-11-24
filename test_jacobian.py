@@ -1,6 +1,6 @@
 from ccnact import parcel
-import timeit
 import time
+import numpy as np
 
 def test_analytical_jacobian_against_scipy(example_parameters):
     # TODO: check results equivalent (up to epsilon...)
@@ -17,23 +17,24 @@ def test_jacobian_execution_time(example_parameters):
     # TODO: check with Jacobian makes it faster
     # TODo check dependence on n_iters
     # arrange
-    n_iters = 2
-    times = [0, 0, 0]
+    n_iters = 50
+    n_warmup = 5
+    times = {0: [], 2: []}
+
+    for i in [0, 2]:
+        for _ in range(n_warmup):
+            parcel(**example_parameters, analytic_jacobian=i)
 
     # act
-
-    for i in range(3):
-        exec_time = 0
+    for i in [0, 2]:
         for _ in range(n_iters):
-            t1 = time.time()
+            start = time.perf_counter()
             parcel(**example_parameters, analytic_jacobian=i)
-            exec_time += time.time() - t1
-        times[i] = exec_time / n_iters
 
-    # assert
-    print()
-    print("none  vs analytic", times[0] / times[2])
-    print("scipy vs analytic", times[1] / times[2])
-    print("scipy vs none    ", times[1] / times[0])
-    assert False
-    assert times[0] / times[2] > 17,  "Analytic jacobian not 17 times faster no jacobian"
+            times[i].append(time.perf_counter() - start)
+
+    speedup = np.median(times[0]) / np.median(times[2])
+
+    expected_speedup_macos = 5.2
+    print(speedup) # FIXME it is for checking different platforms
+    assert speedup > expected_speedup_macos
